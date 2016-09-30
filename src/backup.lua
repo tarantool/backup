@@ -14,7 +14,7 @@ local function upload_by_mask(self, dir, mask, prefix)
         end
 
         local ok = self.engine:upload_file(
-            self.bucket, name, path
+            self.target.bucket, name, path
         )
         if not ok then
             return false
@@ -65,60 +65,66 @@ local backup = {
 
     backup = function(self)
         -- common backup wrapper
-        return self.modes[self.mode].backup(self)
+        return self.modes[self.target.mode].backup(self)
     end,
 
     restore = function(self)
         -- common restore wrapper
-        return self.modes[self.mode].restore(self)
+        return self.modes[self.target.mode].restore(self)
     end,
 
     worker = function(self)
         -- backup worker
-        -- FIXME: implement cron-like schedule
         fiber.name('Auto backup worker')
         while true do
-            if self:backup() then
-                log.info('Backup complete')
-            else
-                log.error('Backup failed')
-            end
+            -- s3 tmp hach (memory leak in S3_put_object)
+            self.engine = require(self.opts.engine)
+            self.engine:init(self.opts.args)
+            -- FIXME-1: need to find memleak in libs3
+            -- FIXME-2: this code can be removed after solvig (1)
+
+	    if self:backup() then
+		log.info('Backup complete')
+	    else
+		log.error('Backup failed')
+	    end
             fiber.sleep(self.schedule)
         end
     end,
 
-    start = function(self, target, bucket, engine, opts)
+    start = function(self, target, opts)
         self.target = target
-        self.bucket = bucket
+        self.opts = opts
         self.schedule = target.schedule
-        self.mode = target.mode
 
-        if self.mode == nil then
+        if self.target.mode == nil then
             return false, "Undefined mode"
         end
-        if not self:is_valid_mode(self.mode) then
-            return false, string.format('Unknown mode "%s"', self.mode)
+        if not self:is_valid_mode(self.target.mode) then
+            return false, string.format(
+                'Unknown mode "%s"', self.target.mode
+            )
         end
-        if mode == 'tarantool' and type(box.cfg) ~= 'table' then
+        if self.target.mode == 'tarantool'
+                and type(box.cfg) ~= 'table' then
             return false, "Can't backup withou box.cfg{}"
         end
-        if engine == nil then
+        if self.opts.engine == nil then
             return false, "Undefined engine"
         end
-        local args = opts.args
-        if args == nil then
+        if self.opts.args == nil then
             return false, "Undefined engine arguments"
         end
 
         local _, err = pcall(function()
-            self.engine = require(engine)
-            self.engine:init(unpack(args))
+            self.engine = require(self.opts.engine)
+            self.engine:init(self.opts.args)
         end)
 
         if err ~= nil then
             log.error(
                 'Failed to start engine "%s": %s',
-                engine, tostring(err)
+                self.opts.engine, tostring(err)
             )
         end
 
