@@ -1,5 +1,5 @@
 # backup
-Automatic backup plugin for Tarantool. In progress
+Automatic backup plugin for Tarantool.
 
 Engines:
 * Amazon S3
@@ -31,9 +31,9 @@ local backup_cfg= {
     {
         engine="s3" ,                   -- bucket hosted in amazon s3
         args={                          -- credentals for amazon s3
-	    access='your access key',
-	    secret='your secret key',
-	    region='us-east-1',
+            access='your access key',
+            secret='your secret key',
+            region='us-east-1',
             host='host.com'
         }
     }
