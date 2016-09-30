@@ -1,4 +1,5 @@
 local fiber = require('fiber')
+local yaml = require('yaml')
 local fio = require('fio')
 local log = require('log')
 
@@ -27,15 +28,32 @@ local function tarantool_backup(self)
     -- Tarantool backup wrapper
     -- FIXME: Currently memtx-only
     local snap_ok = upload_by_mask(
-        self, box.cfg.snap_dir, '*.snap', 'tarantool'
+        self, box.cfg.snap_dir, '*.snap', self.target.prefix
     )
     local wal_ok = upload_by_mask(
-        self, box.cfg.wal_dir, '*.xlog', 'tarantool'
+        self, box.cfg.wal_dir, '*.xlog', self.target.prefix
     )
     return snap_ok and wal_ok
 end
 
 local function tarantool_restore(self)
+    local files = self.engine:list(self.target.bucket, self.target.prefix)
+    -- show remote storage/bucket content list to administrator
+    log.info(yaml.encode(files))
+    for _, file in pairs(files) do
+        local path = fio.pathjoin(self.target.restore_to, file.name)
+        local ok = self.engine:download_file(self.target.bucket, file.name, path)
+        if not ok then
+            log.error('Restore operation failed')
+            return false
+        end
+    end
+    log.info(
+        'Backup "%s" restored to: "%s"',
+        fio.pathjoin(self.target.bucket, self.target.prefix),
+        fio.pathjoin(self.target.restore_to, self.target.prefix)
+    )
+    return true
 end
 
 local backup = {
@@ -45,10 +63,10 @@ local backup = {
             restore = tarantool_restore
         },
         -- FIXME: directory backup not implemented
-        directory = {
-            backup = function(self)end,
-            restore = function(self)end
-        }
+        -- directory = {
+        --    backup = function(self)end,
+        --    restore = function(self)end
+        --}
     },
 
     is_valid_mode = function(self, mode)
@@ -68,7 +86,21 @@ local backup = {
         return self.modes[self.target.mode].backup(self)
     end,
 
-    restore = function(self)
+    restore = function(self, target, opts)
+        local ok, err = self:configure(target, opts)
+        if not ok then
+            return ok, err
+        end
+        if target.restore_to == nil then
+            return false, "Undefined parameter 'restore_to'"
+        end
+        local restore_path = target.restore_to
+        if target.prefix ~= nil then
+            restore_path = fio.pathjoin(restore_path, target.prefix)
+        end
+        if fio.stat(restore_path) == nil then
+            return false, "Restore directory does not exist"
+        end
         -- common restore wrapper
         return self.modes[self.target.mode].restore(self)
     end,
@@ -92,10 +124,9 @@ local backup = {
         end
     end,
 
-    start = function(self, target, opts)
+    configure = function(self, target, opts, resotre)
         self.target = target
         self.opts = opts
-        self.schedule = target.schedule
 
         if self.target.mode == nil then
             return false, "Undefined mode"
@@ -105,9 +136,10 @@ local backup = {
                 'Unknown mode "%s"', self.target.mode
             )
         end
+        -- return false only in backup mode
         if self.target.mode == 'tarantool'
-                and type(box.cfg) ~= 'table' then
-            return false, "Can't backup withou box.cfg{}"
+                and restore ~= nil and type(box.cfg) ~= 'table' then
+            return false, "Can't backup without box.cfg{}"
         end
         if self.opts.engine == nil then
             return false, "Undefined engine"
@@ -127,7 +159,19 @@ local backup = {
                 self.opts.engine, tostring(err)
             )
         end
+        return true
+    end,
 
+    start = function(self, target, opts)
+        self.schedule = target.schedule
+
+        -- setup and check configuration
+        local ok, err = self:configure(target, opts)
+        if not ok then
+            return ok, err
+        end
+
+        -- start backup
         fiber.create(self.worker, self)
         log.info('Backup started on %s engine', engine)
         return true        
