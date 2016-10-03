@@ -51,12 +51,21 @@ local function tarantool_backup(self)
     return snap_ok and wal_ok
 end
 
+local function resolve_path(self, filename)
+    if string.match(fio.basename(filename), '.xlog') ~= nil then
+        return self.target.restore_wal
+    end
+    if string.match(fio.basename(filename), '.snap') ~= nil then
+        return self.target.restore_snap
+    end
+end
+
 local function tarantool_restore(self)
     local files = self.engine:list(self.target.bucket, self.target.prefix)
     -- show remote storage/bucket content list to administrator
     log.info(yaml.encode(files))
     for _, file in pairs(files) do
-        local path = fio.pathjoin(self.target.restore_to, file.name)
+        local path = fio.pathjoin(resolve_path(self, file.name), file.name)
         local ok = self.engine:download_file(self.target.bucket, file.name, path)
         if not ok then
             log.error('Restore operation failed')
@@ -64,9 +73,10 @@ local function tarantool_restore(self)
         end
     end
     log.info(
-        'Backup "%s" restored to: "%s"',
+        'Backup "%s" restored to: snaps="%s", xlogs="%s"',
         fio.pathjoin(self.target.bucket, self.target.prefix),
-        fio.pathjoin(self.target.restore_to, self.target.prefix)
+        fio.pathjoin(self.target.restore_snap, self.target.prefix),
+        fio.pathjoin(self.target.restore_wal, self.target.prefix)
     )
     return true
 end
@@ -101,20 +111,32 @@ local backup = {
         return self.modes[self.target.mode].backup(self)
     end,
 
+    is_valid_restore_path = function(self, path)
+        if path == nil then
+            return false, "Undefined restore-path"
+        end
+        local restore_path = path
+        if self.target.prefix ~= nil then
+            restore_path = fio.pathjoin(restore_path, self.target.prefix)
+        end
+        if fio.stat(restore_path) == nil then
+            return false, "Restore directory does not exist"
+        end
+        return true
+    end,
+
     restore = function(self, target, opts)
         local ok, err = self:configure(target, opts)
         if not ok then
             return ok, err
         end
-        if target.restore_to == nil then
-            return false, "Undefined parameter 'restore_to'"
+        local snap_ok, err = self:is_valid_restore_path(self.target.restore_snap)
+        if not snap_ok then
+            return snap_ok, err
         end
-        local restore_path = target.restore_to
-        if target.prefix ~= nil then
-            restore_path = fio.pathjoin(restore_path, target.prefix)
-        end
-        if fio.stat(restore_path) == nil then
-            return false, "Restore directory does not exist"
+        local wal_ok, err = self:is_valid_restore_path(self.target.restore_wal)
+        if not wal_ok then
+            return wal_ok, err
         end
         -- common restore wrapper
         return self.modes[self.target.mode].restore(self)

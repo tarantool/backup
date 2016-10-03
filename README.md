@@ -1,5 +1,5 @@
 # backup
-Automatic backup plugin for Tarantool.
+Automatic backup plugin for Tarantool. Vinyl engine is currently unsupported.
 
 Engines:
 * Amazon S3
@@ -10,6 +10,9 @@ You need only `start(target, opts)` function. Arguments describtion:
 * `mode`: backup mode: `tarantool` - backup instance files(wal/snap dirs)
 * `schedule`: backup interval in seconds
 * `bucket`: container name (like bucket in amazon s3)
+* `prefix`: application name prefix
+* `restore_snap`: snapshot directory
+* `restore_wal`: xlogs directory
 
 ### opts: table
 * `engine` - backup storage engine name
@@ -22,15 +25,16 @@ local backup = require('backup')
 -- Configure auto backup in amazon s3, every 5 minutes
 local backup_cfg= {
     {
-        mode='tarantool',               -- we need to backup tarantool wal/snap files
-        schedule=60*5,                  -- every 5 minutes
-        bucket='test',                  -- into bucket "test"
-        restore_to='/var/lib/tarantool',-- restore to directory
-        prefix="demo"                   -- bucket/app_name prefix
+        mode='tarantool',                 -- we need to backup tarantool wal/snap files
+        schedule=60*5,                    -- every 5 minutes
+        bucket='test',                    -- into bucket "test"
+        restore_snap='/var/lib/tarantool',-- restore snapshots to to this directory
+        restore_wal='/var/lib/tarantool', -- restore xlogs to this directory
+        prefix="demo"                     -- bucket/app_name prefix
     },
     {
-        engine="s3" ,                   -- bucket hosted in amazon s3
-        args={                          -- credentals for amazon s3
+        engine="s3" ,                     -- bucket hosted in amazon s3
+        args={                            -- credentals for amazon s3
             access='your access key',
             secret='your secret key',
             region='us-east-1',
@@ -66,6 +70,6 @@ $tarantoolctl start demo
   size: 340
 ...
 
-/usr/bin/tarantoolctl: Backup "test/demo" restored to: "/var/lib/tarantool/demo"
+/usr/bin/tarantoolctl: Backup "test/demo" restored to: snaps="/var/lib/tarantool/demo", xlogs="/var/lib/tarantool/demo"
 ```
 
