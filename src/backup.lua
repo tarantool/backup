@@ -3,22 +3,37 @@ local yaml = require('yaml')
 local fio = require('fio')
 local log = require('log')
 
+local function in_cloud(cloud, file)
+    for _, elem in pairs(cloud) do
+        local compare = fio.basename(elem.name)
+        if file.name == compare and elem.size == file.size then
+            return true
+        end
+    end
+    return false
+end
+
 local function upload_by_mask(self, dir, mask, prefix)
     -- Upload files from `dir` by mask with prefix
     -- can be used in any uploaders
     local files = fio.glob(fio.pathjoin(dir, mask))
+    local cloud_files = self.engine:list(self.target.bucket, self.target.prefix)
+
     for _, path in pairs(files) do
+        local size = fio.stat(path).size
         local filename = fio.basename(path)
         local name = filename
         if prefix ~= nil then
             name = prefix .. '/' .. name
         end
-
-        local ok = self.engine:upload_file(
-            self.target.bucket, name, path
-        )
-        if not ok then
-            return false
+        -- upload only new or updated files
+        if not in_cloud(cloud_files, {name=filename, size=size}) then
+            local ok = self.engine:upload_file(
+                self.target.bucket, name, path
+            )
+            if not ok then
+                return false
+            end
         end
     end
     return true
@@ -173,7 +188,7 @@ local backup = {
 
         -- start backup
         fiber.create(self.worker, self)
-        log.info('Backup started on %s engine', engine)
+        log.info('Backup started on %s engine', opts.engine)
         return true        
     end,
 }
